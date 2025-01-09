@@ -78,24 +78,24 @@ def _get_data(handle):
 class Index:
     """An R-Tree, MVR-Tree, or TPR-Tree indexing object"""
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *args: Any,
+        filename: str | bytes | None = None,
+        stream: Any | None = None,
+        storage: ICustomStorage | None = None,
+        arrays: tuple | None = None,
+        interleaved: bool = True,
+        properties: Property | None = None,
+    ) -> None:
         """Creates a new index
 
-        :param filename:
-            The first argument in the constructor is assumed to be a filename
-            determining that a file-based storage for the index should be used.
-            If the first argument is not of type basestring, it is then assumed
-            to be an instance of ICustomStorage or derived class.
-            If the first argument is neither of type basestring nor an instance
-            of ICustomStorage, it is then assumed to be an input index item
-            stream.
+        :param filename: A filename determining that a file-based storage for the index
+            should be used.
 
-        :param stream:
-            If the first argument in the constructor is not of type basestring,
-            it is assumed to be an iterable stream of data that will raise a
-            StopIteration.  It must be in the form defined by the
-            :attr:`interleaved` attribute of the index. The following example
-            would assume :attr:`interleaved` is False::
+        :param stream: An iterable stream of data that will raise a StopIteration.
+            It must be in the form defined by the :attr:`interleaved` attribute of the
+            index. The following example would assume :attr:`interleaved` is False::
 
                 (id,
                  (minx, maxx, miny, maxy, minz, maxz, ..., ..., mink, maxk),
@@ -112,21 +112,15 @@ class Index:
                   time),
                  object)
 
-        :param storage:
-            If the first argument in the constructor is an instance of
-            ICustomStorage then the given custom storage is used.
+        :param storage: A custom storage object to be used.
 
-        :param interleaved: True or False, defaults to True.
-            This parameter determines the coordinate order for all methods that
+        :param arrays: A tuple of arrays for bulk addition.
+
+        :param interleaved: Determines the coordinate order for all methods that
             take in coordinates.
 
-        :param properties: An :class:`index.Property` object.
-            This object sets both the creation and instantiation properties
-            for the object and they are passed down into libspatialindex.
-            A few properties are curried from instantiation parameters
-            for you like ``pagesize`` and ``overwrite``
-            to ensure compatibility with previous versions of the library.  All
-            other properties must be set on the object.
+        :param properties: This object sets both the creation and instantiation
+            properties for the object and they are passed down into libspatialindex.
 
         .. warning::
             The coordinate ordering for all functions are sensitive the
@@ -194,7 +188,8 @@ class Index:
             True
 
         """
-        self.properties = kwargs.get("properties", Property())
+        self.interleaved = interleaved
+        self.properties = properties or Property()
 
         if self.properties.type == RT_TPRTree and not hasattr(
             core.rt, "Index_InsertTPData"
@@ -203,17 +198,13 @@ class Index:
                 "TPR-Tree type not supported with version of libspatialindex"
             )
 
-        # interleaved True gives 'bbox' order.
-        self.interleaved = bool(kwargs.get("interleaved", True))
-
-        stream = None
-        arrays = None
-        basename = None
-        storage = None
         if args:
+            msg = "Index() parameters without keyword arguments are deprecated"
+            warnings.warn(msg, DeprecationWarning)
+
             if isinstance(args[0], str) or isinstance(args[0], bytes):
                 # they sent in a filename
-                basename = args[0]
+                filename = args[0]
                 # they sent in a filename, stream or filename, buffers
                 if len(args) > 1:
                     if isinstance(args[1], tuple):
@@ -230,19 +221,17 @@ class Index:
             else:
                 stream = args[0]
 
-        if basename:
+        if filename:
             self.properties.storage = RT_Disk
-            self.properties.filename = basename
+            self.properties.filename = filename
 
             # check we can read the file
-            f = str(basename) + "." + self.properties.idx_extension
+            f = str(filename) + "." + self.properties.idx_extension
             p = os.path.abspath(f)
 
             # assume if the file exists, we're not going to overwrite it
             # unless the user explicitly set the property to do so
             if os.path.exists(p):
-                self.properties.overwrite = bool(kwargs.get("overwrite", False))
-
                 # assume we're fetching the first index_id.  If the user
                 # set it, we'll fetch that one.
                 if not self.properties.overwrite:
@@ -258,7 +247,6 @@ class Index:
         elif storage:
             self.properties.storage = RT_Custom
             if storage.hasData:
-                self.properties.overwrite = bool(kwargs.get("overwrite", False))
                 if not self.properties.overwrite:
                     try:
                         self.properties.index_id
@@ -270,10 +258,6 @@ class Index:
             storage.registerCallbacks(self.properties)
         else:
             self.properties.storage = RT_Memory
-
-        ps = kwargs.get("pagesize", None)
-        if ps:
-            self.properties.pagesize = int(ps)
 
         if stream and self.properties.type == RT_RTree:
             self._exception = None

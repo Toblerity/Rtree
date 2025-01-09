@@ -36,7 +36,7 @@ class IndexTestCase(unittest.TestCase):
         # some versions of libspatialindex screw up indexes on stream loading
         # so do a very simple index check
         rtree_test = rtree.index.Index(
-            [(1564, [0, 0, 0, 10, 10, 10], None)],
+            stream=[(1564, [0, 0, 0, 10, 10, 10], None)],
             properties=rtree.index.Property(dimension=3),
         )
         assert next(rtree_test.intersection([1, 1, 1, 2, 2, 2])) == 1564
@@ -240,7 +240,7 @@ class IndexIntersection(IndexTestCase):
         self.assertTrue(0 in self.idx.intersection((0, 0, 60, 60)))
         hits = list(self.idx.intersection((0, 0, 60, 60)))
 
-        self.assertTrue(len(hits), 10)
+        self.assertEqual(len(hits), 10)
         self.assertEqual(hits, [0, 4, 16, 27, 35, 40, 47, 50, 76, 80])
 
     def test_objects(self) -> None:
@@ -400,7 +400,7 @@ class IndexSerialization(unittest.TestCase):
         """Unicode filenames work as expected"""
         tname = tempfile.mktemp()
         filename = tname + "gilename\u4500abc"
-        idx = index.Index(filename)
+        idx = index.Index(filename=filename)
         idx.insert(
             4321, (34.3776829412, 26.7375853734, 49.3776829412, 41.7375853734), obj=42
         )
@@ -431,19 +431,19 @@ class IndexSerialization(unittest.TestCase):
         p.dat_extension = "data"
         p.idx_extension = "index"
         tname = tempfile.mktemp()
-        idx = index.Index(tname, properties=p)
+        idx = index.Index(filename=tname, properties=p)
         for i, coords in enumerate(self.boxes15):
             idx.add(i, coords)
 
         hits = list(idx.intersection((0, 0, 60, 60)))
-        self.assertTrue(len(hits), 10)
+        self.assertEqual(len(hits), 10)
         self.assertEqual(hits, [0, 4, 16, 27, 35, 40, 47, 50, 76, 80])
         del idx
 
         # Check we can reopen the index and get the same results
-        idx2 = index.Index(tname, properties=p)
+        idx2 = index.Index(filename=tname, properties=p)
         hits = list(idx2.intersection((0, 0, 60, 60)))
-        self.assertTrue(len(hits), 10)
+        self.assertEqual(len(hits), 10)
         self.assertEqual(hits, [0, 4, 16, 27, 35, 40, 47, 50, 76, 80])
 
     @pytest.mark.skipif(not sys.maxsize > 2**32, reason="Fails on 32bit systems")
@@ -462,10 +462,13 @@ class IndexSerialization(unittest.TestCase):
         p = index.Property()
         tname = tempfile.mktemp()
         idx = index.Index(
-            tname, data_gen(interleaved=False), properties=p, interleaved=False
+            filename=tname,
+            stream=data_gen(interleaved=False),
+            properties=p,
+            interleaved=False,
         )
         hits1 = sorted(list(idx.intersection((0, 60, 0, 60))))
-        self.assertTrue(len(hits1), 10)
+        self.assertEqual(len(hits1), 10)
         self.assertEqual(hits1, [0, 4, 16, 27, 35, 40, 47, 50, 76, 80])
 
         leaves = idx.leaves()
@@ -591,16 +594,16 @@ class IndexSerialization(unittest.TestCase):
         )
 
         hits2 = sorted(list(idx.intersection((0, 60, 0, 60), objects=True)))
-        self.assertTrue(len(hits2), 10)
+        self.assertEqual(len(hits2), 10)
         self.assertEqual(hits2[0].object, 42)
 
     def test_overwrite(self) -> None:
         """Index overwrite works as expected"""
         tname = tempfile.mktemp()
 
-        idx = index.Index(tname)
+        idx = index.Index(filename=tname)
         del idx
-        idx = index.Index(tname, overwrite=True)
+        idx = index.Index(filename=tname, properties=index.Property(overwrite=True))
         assert isinstance(idx, index.Index)
 
 
@@ -700,7 +703,7 @@ class IndexMoreDimensions(IndexTestCase):
 class IndexStream(IndexTestCase):
     def test_stream_input(self) -> None:
         p = index.Property()
-        sindex = index.Index(self.boxes15_stream(), properties=p)
+        sindex = index.Index(stream=self.boxes15_stream(), properties=p)
         bounds = (0, 0, 60, 60)
         hits = sindex.intersection(bounds)
         self.assertEqual(sorted(hits), [0, 4, 16, 27, 35, 40, 47, 50, 76, 80])
@@ -711,7 +714,8 @@ class IndexStream(IndexTestCase):
 
     def test_empty_stream(self) -> None:
         """Assert empty stream raises exception"""
-        self.assertRaises(RTreeError, index.Index, iter(()))
+        with self.assertRaises(RTreeError):
+            index.Index(stream=iter(()))
 
     def test_exception_in_generator(self) -> None:
         """Assert exceptions raised in callbacks are raised in main thread"""
@@ -726,7 +730,7 @@ class IndexStream(IndexTestCase):
                     yield (i, (1, 2, 3, 4), None)
                 raise TestException("raising here")
 
-            return index.Index(gen())
+            return index.Index(stream=gen())
 
         self.assertRaises(TestException, create_index)
 
@@ -743,7 +747,7 @@ class IndexStream(IndexTestCase):
             def gen() -> None:
                 raise TestException("raising here")
 
-            return index.Index(gen())  # type: ignore[func-returns-value]
+            return index.Index(stream=gen())  # type: ignore[func-returns-value]
 
         self.assertRaises(TestException, create_index)
 
@@ -810,7 +814,7 @@ class IndexCustomStorage(unittest.TestCase):
         # we just use it here for illustrative and testing purposes.
 
         storage = DictStorage()
-        r = index.Index(storage, properties=settings)
+        r = index.Index(storage=storage, properties=settings)
 
         # Interestingly enough, if we take a look at the contents of our
         # storage now, we can see the Rtree has already written two pages
@@ -849,12 +853,14 @@ class IndexCustomStorage(unittest.TestCase):
         settings = index.Property()
         settings.writethrough = True
         settings.buffering_capacity = 1
+        settings.overwrite = True
 
-        r1 = index.Index(storage, properties=settings, overwrite=True)
+        r1 = index.Index(storage=storage, properties=settings)
         r1.add(555, (2, 2))
         del r1
         self.assertTrue(storage.hasData)
 
-        r2 = index.Index(storage, properly=settings, overwrite=False)
+        settings.overwrite = False
+        r2 = index.Index(storage=storage, properties=settings)
         count = r2.count((0, 0, 10, 10))
         self.assertEqual(count, 1)
